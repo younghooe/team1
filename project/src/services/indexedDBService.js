@@ -31,6 +31,18 @@ export const getAllPosts = async () => {
   })
 }
 
+export const getPost = async (id) => {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.get(id)
+
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
 export const addPost = async (post) => {
   const db = await openDB()
   return new Promise((resolve, reject) => {

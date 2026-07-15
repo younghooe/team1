@@ -1,13 +1,14 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import BoardWrite from './BoardWrite.vue'
-import { addPost, deletePost, getAllPosts, updatePost } from '../services/indexedDBService'
+import { addPost, deletePost, getAllPosts, updatePost, getPost } from '../services/indexedDBService'
 
 const posts = ref([])
 const deleteTargetId = ref('')
 const deletePassword = ref('')
 const feedback = ref('')
 const commentInputs = ref({})
+const expandedPostId = ref(null)
 
 const loadPosts = async () => {
   const allPosts = await getAllPosts()
@@ -52,15 +53,49 @@ const handleDelete = async () => {
 }
 
 const toggleLike = async (post) => {
-  const updatedPost = { ...post, likes: (post.likes || 0) + 1 }
-  await updatePost(updatedPost)
-  await loadPosts()
+  const postId = post.id
+  const idx = posts.value.findIndex((p) => p.id === postId)
+  if (idx === -1) return
+
+  const originalLikes = posts.value[idx].likes || 0
+  // optimistic UI update
+  posts.value[idx] = { ...posts.value[idx], likes: originalLikes + 1 }
+
+  try {
+    // read latest post from DB to avoid overwriting fields
+    const dbPost = await getPost(postId)
+    if (!dbPost) throw new Error('게시글을 찾을 수 없습니다.')
+    const updatedPost = { ...dbPost, likes: (dbPost.likes || 0) + 1 }
+    await updatePost(updatedPost)
+    // ensure UI matches DB
+    await loadPosts()
+  } catch (error) {
+    // revert on error
+    posts.value[idx] = { ...posts.value[idx], likes: originalLikes }
+    feedback.value = '좋아요 저장에 실패했습니다.'
+    console.error('Failed to update like:', error)
+  }
 }
 
-const viewPost = async (post) => {
-  const updatedPost = { ...post, views: (post.views || 0) + 1 }
-  await updatePost(updatedPost)
-  await loadPosts()
+const openPost = async (post) => {
+  // toggle
+  if (expandedPostId.value === post.id) {
+    expandedPostId.value = null
+    return
+  }
+
+  expandedPostId.value = post.id
+
+  try {
+    const dbPost = await getPost(post.id)
+    if (!dbPost) throw new Error('게시글을 찾을 수 없습니다.')
+    const updatedPost = { ...dbPost, views: (dbPost.views || 0) + 1 }
+    await updatePost(updatedPost)
+    await loadPosts()
+  } catch (error) {
+    feedback.value = '조회수 저장 실패.'
+    console.error('Failed to update view count:', error)
+  }
 }
 
 const addComment = async (post) => {
@@ -108,26 +143,31 @@ onMounted(loadPosts)
           <h3>{{ post.title }}</h3>
           <span>#{{ post.id }}</span>
         </div>
-        <p>{{ post.content }}</p>
-        <div class="post-meta">
-          <span>조회 {{ post.views || 0 }}</span>
-          <span>좋아요 {{ post.likes || 0 }}</span>
-          <button @click="viewPost(post)">열기</button>
-          <button @click="toggleLike(post)">좋아요</button>
-        </div>
+        <div v-if="expandedPostId === post.id">
+          <p>{{ post.content }}</p>
+          <div class="post-meta">
+            <span>조회 {{ post.views || 0 }}</span>
+            <span>좋아요 {{ post.likes || 0 }}</span>
+            <button type="button" @click="openPost(post)">닫기</button>
+            <button type="button" @click="toggleLike(post)">좋아요</button>
+          </div>
 
-        <div class="comments">
-          <h4>댓글</h4>
-          <div v-if="post.comments?.length" class="comment-list">
-            <div v-for="comment in post.comments" :key="comment.id" class="comment-item">
-              {{ comment.content }}
+          <div class="comments">
+            <h4>댓글</h4>
+            <div v-if="post.comments?.length" class="comment-list">
+              <div v-for="comment in post.comments" :key="comment.id" class="comment-item">
+                {{ comment.content }}
+              </div>
+            </div>
+            <div v-else class="comment-empty">첫 댓글을 남겨보세요.</div>
+            <div class="comment-form">
+              <input v-model="commentInputs[post.id]" placeholder="댓글을 입력해 주세요" />
+              <button @click="addComment(post)">등록</button>
             </div>
           </div>
-          <div v-else class="comment-empty">첫 댓글을 남겨보세요.</div>
-          <div class="comment-form">
-            <input v-model="commentInputs[post.id]" placeholder="댓글을 입력해 주세요" />
-            <button @click="addComment(post)">등록</button>
-          </div>
+        </div>
+        <div v-else class="post-closed">
+          <button type="button" @click="openPost(post)">열기</button>
         </div>
       </article>
     </div>
